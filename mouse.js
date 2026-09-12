@@ -1,72 +1,50 @@
 (function () {
     'use strict';
 
-    if (window.lampa_mouse_fix_injected) return;
-    window.lampa_mouse_fix_injected = true;
+    if (window.lampa_ultra_mouse_fixed) return;
+    window.lampa_ultra_mouse_fixed = true;
 
-    function initMouseFix() {
-        // Системне налаштування навігації всередині Lampa
+    function initUltraMouseFix() {
+        // Примусово ламаємо стандартне блокування миші в Lampa
         if (window.Lampa && window.Lampa.Storage) {
             window.Lampa.Storage.set('navigation_type', 'mouse');
         }
 
-        // Новий, більш жорсткий перехоплювач кліків аеромишки
-        window.addEventListener('click', function (e) {
-            // Шукаємо будь-який елемент інтерфейсу Lampa під курсором, який можна натиснути
-            var target = e.target.closest('.navigation-item, .card, .menu__item, .button, .selector, [selectable]');
-            
-            if (target) {
-                e.preventDefault();
-                e.stopPropagation();
+        // Перехоплюємо подію ПЕРЕД тим, як її заблокує ядро Lampa
+        window.addEventListener('mousedown', function (e) {
+            // Шукаємо картку фільму або кнопку меню під курсором
+            var target = e.target.closest('.card, .navigation-item, .menu__item, .button, .selector');
+            if (!target) return;
 
-                // 1. Примусово переводимо фокус Lampa на цей елемент
-                if (window.Lampa && window.Lampa.Navigator) {
-                    window.Lampa.Navigator.focused(target);
-                }
-
-                // 2. Імітуємо клік через вбудований механізм дій Lampa
-                var clickEvent = new MouseEvent('click', {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true
-                });
-                target.dispatchEvent(clickEvent);
-
-                // 3. Дублюємо натисканням клавіші ENTER для надійності Android TV
-                var enterEvent = new KeyboardEvent('keydown', {
-                    bubbles: true, cancelable: true, keyCode: 13, which: 13
-                });
-                target.dispatchEvent(enterEvent);
-            }
-        }, true);
-
-        // Покращений скролінг (Drag & Scroll) для списків фільмів
-        var isDown = false;
-        var startX, scrollLeft, scrollTarget;
-
-        window.addEventListener('mousedown', function(e) {
-            scrollTarget = e.target.closest('.scroll__content, .items-line, .stub-row, .full-start__channels');
-            if (!scrollTarget) return;
-            isDown = true;
-            startX = e.pageX - scrollTarget.offsetLeft;
-            scrollLeft = scrollTarget.scrollLeft;
-        });
-
-        window.addEventListener('mouseleave', function() { isDown = false; });
-        window.addEventListener('mouseup', function() { isDown = false; });
-
-        window.addEventListener('mousemove', function(e) {
-            if(!isDown || !scrollTarget) return;
+            // Зупиняємо стандартний обробник Lampa, який ламає фокус
             e.preventDefault();
-            var x = e.pageX - scrollTarget.offsetLeft;
-            var walk = (x - startX) * 2; // Збільшили швидкість прокрутки
-            scrollTarget.scrollLeft = scrollLeft - walk;
-        });
+            e.stopPropagation();
+
+            // Змушуємо Lampa примусово підсвітити те, куди ми клікнули
+            if (window.Lampa && window.Lampa.Navigator) {
+                window.Lampa.Navigator.focused(target);
+            }
+
+            // Штучно викликаємо подію Enter через рідний механізм Lampa
+            setTimeout(function() {
+                var triggerEvent = new KeyboardEvent('keydown', {
+                    bubbles: true,
+                    cancelable: true,
+                    keyCode: 13,
+                    which: 13,
+                    keyCode: 13
+                });
+                target.dispatchEvent(triggerEvent);
+                
+                // Якщо це картка, пробуємо штовхнути її через її власний дата-атрибут
+                if (target.click) target.click();
+            }, 10);
+        }, true); // Флаг true обов'язковий — він перехоплює подію першим у системі
     }
 
     if (window.Lampa) {
-        initMouseFix();
+        initUltraMouseFix();
     } else {
-        document.addEventListener('app:ready', initMouseFix);
+        document.addEventListener('app:ready', initUltraMouseFix);
     }
 })();
