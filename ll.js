@@ -1,4 +1,4 @@
-(function () {
+ (function () {
   'use strict';
 
   if (window.local_lists_plugin_ready) return;
