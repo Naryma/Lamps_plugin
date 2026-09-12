@@ -5,54 +5,65 @@
     window.lampa_mouse_fix_injected = true;
 
     function initMouseFix() {
-        // Примусово вмикаємо режим миші в налаштуваннях Lampa для правильного рендерингу
+        // Системне налаштування навігації всередині Lampa
         if (window.Lampa && window.Lampa.Storage) {
             window.Lampa.Storage.set('navigation_type', 'mouse');
         }
 
-        // Перехоплюємо клік аеромишки та конвертуємо його в подію "ОК" для Lampa
-        document.addEventListener('click', function (e) {
-            var target = e.target.closest('.navigation-item, .card, .menu__item, .button, .selector');
+        // Новий, більш жорсткий перехоплювач кліків аеромишки
+        window.addEventListener('click', function (e) {
+            // Шукаємо будь-який елемент інтерфейсу Lampa під курсором, який можна натиснути
+            var target = e.target.closest('.navigation-item, .card, .menu__item, .button, .selector, [selectable]');
+            
             if (target) {
                 e.preventDefault();
                 e.stopPropagation();
-                
-                // Емулюємо натискання клавіші Enter (код 13) для Android TV
-                var enterEvent = new KeyboardEvent('keydown', {
+
+                // 1. Примусово переводимо фокус Lampa на цей елемент
+                if (window.Lampa && window.Lampa.Navigator) {
+                    window.Lampa.Navigator.focused(target);
+                }
+
+                // 2. Імітуємо клік через вбудований механізм дій Lampa
+                var clickEvent = new MouseEvent('click', {
+                    view: window,
                     bubbles: true,
-                    cancelable: true,
-                    keyCode: 13,
-                    which: 13
+                    cancelable: true
+                });
+                target.dispatchEvent(clickEvent);
+
+                // 3. Дублюємо натисканням клавіші ENTER для надійності Android TV
+                var enterEvent = new KeyboardEvent('keydown', {
+                    bubbles: true, cancelable: true, keyCode: 13, which: 13
                 });
                 target.dispatchEvent(enterEvent);
             }
         }, true);
 
-        // Покращуємо скролінг стрічок фільмів за допомогою перетягування мишкою (Drag & Scroll)
+        // Покращений скролінг (Drag & Scroll) для списків фільмів
         var isDown = false;
         var startX, scrollLeft, scrollTarget;
 
-        document.addEventListener('mousedown', function(e) {
-            scrollTarget = e.target.closest('.scroll__content, .items-line, .stub-row');
+        window.addEventListener('mousedown', function(e) {
+            scrollTarget = e.target.closest('.scroll__content, .items-line, .stub-row, .full-start__channels');
             if (!scrollTarget) return;
             isDown = true;
             startX = e.pageX - scrollTarget.offsetLeft;
             scrollLeft = scrollTarget.scrollLeft;
         });
 
-        document.addEventListener('mouseleave', function() { isDown = false; });
-        document.addEventListener('mouseup', function() { isDown = false; });
+        window.addEventListener('mouseleave', function() { isDown = false; });
+        window.addEventListener('mouseup', function() { isDown = false; });
 
-        document.addEventListener('mousemove', function(e) {
+        window.addEventListener('mousemove', function(e) {
             if(!isDown || !scrollTarget) return;
             e.preventDefault();
             var x = e.pageX - scrollTarget.offsetLeft;
-            var walk = (x - startX) * 1.5; // Швидкість прокрутки
+            var walk = (x - startX) * 2; // Збільшили швидкість прокрутки
             scrollTarget.scrollLeft = scrollLeft - walk;
         });
     }
 
-    // Чекаємо повного завантаження інтерфейсу Lampa
     if (window.Lampa) {
         initMouseFix();
     } else {
