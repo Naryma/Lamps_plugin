@@ -414,14 +414,9 @@
           gistId ? 'https://api.github.com/gists/' + gistId : 'https://api.github.com/gists',
           data,
           function (res) {
-            Lampa.Storage.set(GIST_ID_KEY, res.id);
+            if (res && res.id) Lampa.Storage.set(GIST_ID_KEY, res.id);
             Lampa.Loading.stop();
             Lampa.Noty.show(tr('local_lists_synced'));
-
-            var cur = Lampa.Activity.active();
-            if (cur && cur.component === 'local_lists_view') {
-              Lampa.Activity.replace({ component: 'local_lists_view', title: tr('local_lists_title') });
-            }
           }
         );
       });
@@ -429,34 +424,38 @@
 
     overwrite: function () {
       if (!this.checkAuth()) return;
-      var _this = this;
 
+      var _this = this;
       Lampa.Modal.open({
         title: tr('local_lists_cloud_overwrite'),
         html: $('<div>' + tr('local_lists_cloud_overwrite_confirm') + '</div>'),
         size: 'small',
         buttons: [
           {
-            name: 'ОК',
+            name: 'Так',
             select: function () {
               Lampa.Modal.close();
               Lampa.Loading.start();
 
+              var currentLists = Lists.getAll();
+              var currentFav = Lampa.Storage.get('favorite', {});
+
               var data = {
                 description: 'Lampa Local Lists & Favorites Sync',
                 files: {
-                  'lampa_local_lists.json': { content: JSON.stringify(Lists.getAll(), null, 2) },
-                  'lampa_native_favorite.json': { content: JSON.stringify(Lampa.Storage.get('favorite', {}), null, 2) }
+                  'lampa_local_lists.json': { content: JSON.stringify(currentLists, null, 2) },
+                  'lampa_native_favorite.json': { content: JSON.stringify(currentFav, null, 2) }
                 }
               };
 
               var gistId = Lampa.Storage.get(GIST_ID_KEY, '');
+
               _this.request(
                 gistId ? 'PATCH' : 'POST',
                 gistId ? 'https://api.github.com/gists/' + gistId : 'https://api.github.com/gists',
                 data,
                 function (res) {
-                  Lampa.Storage.set(GIST_ID_KEY, res.id);
+                  if (res && res.id) Lampa.Storage.set(GIST_ID_KEY, res.id);
                   Lampa.Loading.stop();
                   Lampa.Noty.show(tr('local_lists_cloud_overwritten'));
                 }
@@ -464,7 +463,7 @@
             }
           },
           {
-            name: 'Скасувати',
+            name: 'Ні',
             select: function () { Lampa.Modal.close(); }
           }
         ]
@@ -473,51 +472,41 @@
 
     restore: function () {
       if (!this.checkAuth()) return;
-      var _this = this;
 
+      var _this = this;
       Lampa.Modal.open({
         title: tr('local_lists_cloud_restore'),
         html: $('<div>' + tr('local_lists_cloud_restore_confirm') + '</div>'),
         size: 'small',
         buttons: [
           {
-            name: 'ОК',
+            name: 'Так',
             select: function () {
               Lampa.Modal.close();
               Lampa.Loading.start();
 
               _this.getGist(function (gist) {
+                if (gist && gist.files) {
+                  if (gist.files['lampa_local_lists.json']) {
+                    try {
+                      var remoteLists = JSON.parse(gist.files['lampa_local_lists.json'].content);
+                      Lists.save(remoteLists);
+                    } catch (e) {}
+                  }
+                  if (gist.files['lampa_native_favorite.json']) {
+                    try {
+                      var remoteFav = JSON.parse(gist.files['lampa_native_favorite.json'].content);
+                      Lampa.Storage.set('favorite', remoteFav);
+                    } catch (e) {}
+                  }
+                }
                 Lampa.Loading.stop();
-                if (!gist || !gist.files) {
-                  Lampa.Noty.show('Дані в хмарі не знайдені');
-                  return;
-                }
-
-                if (gist.files['lampa_local_lists.json']) {
-                  try {
-                    var remoteLists = JSON.parse(gist.files['lampa_local_lists.json'].content);
-                    Lists.save(remoteLists);
-                  } catch (e) {}
-                }
-
-                if (gist.files['lampa_native_favorite.json']) {
-                  try {
-                    var remoteFav = JSON.parse(gist.files['lampa_native_favorite.json'].content);
-                    Lampa.Storage.set('favorite', remoteFav);
-                  } catch (e) {}
-                }
-
                 Lampa.Noty.show(tr('local_lists_cloud_restored'));
-
-                var cur = Lampa.Activity.active();
-                if (cur && cur.component === 'local_lists_view') {
-                  Lampa.Activity.replace({ component: 'local_lists_view', title: tr('local_lists_title') });
-                }
               });
             }
           },
           {
-            name: 'Скасувати',
+            name: 'Ні',
             select: function () { Lampa.Modal.close(); }
           }
         ]
@@ -525,392 +514,527 @@
     }
   };
 
-  // ── Меню редагування та керування списками ───────────────────────────
-  function openEditListsMenu(onCloseCallback) {
-    var allLists = Lists.getAll();
-    var $html = $('<div class="local-lists-edit-container" style="padding: 10px 0;"></div>');
+  // ── Модальне вікно управління списками (Manage Lists) ───────────────
+  function openManageListsModal() {
+    function render() {
+      var lists = Lists.getAll();
+      var $wrap = $('<div class="local-lists-manage"></div>');
 
-    function renderItems() {
-      $html.empty();
-      if (!allLists.length) {
-        $html.append('<div style="text-align: center; padding: 20px; color: #888;">' + tr('local_lists_empty') + '</div>');
-        return;
-      }
+      if (!lists.length) {
+        $wrap.append('<div class="local-lists-empty" style="padding: 1em; text-align: center;">' + tr('local_lists_empty') + '</div>');
+      } else {
+        lists.forEach(function (list, index) {
+          var $row = $(
+            '<div class="selector local-lists-manage__item" style="display:flex; align-items:center; justify-content:space-between; padding:0.8em; margin-bottom:0.4em; background:rgba(255,255,255,0.05); border-radius:0.5em;">' +
+              '<div class="local-lists-manage__title" style="flex-grow:1; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escapeHtml(list.name) + '</div>' +
+              '<div class="local-lists-manage__actions" style="display:flex; gap:0.5em; align-items:center;">' +
+                '<div class="selector local-lists-btn--toggle" style="padding:0.3em; cursor:pointer;" title="Hide/Show">' + (list.hidden ? ICON_UNCHECKED : ICON_CHECKED) + '</div>' +
+                '<div class="selector local-lists-btn--up" style="padding:0.3em; cursor:pointer;" title="Up">' + ICON_UP + '</div>' +
+                '<div class="selector local-lists-btn--down" style="padding:0.3em; cursor:pointer;" title="Down">' + ICON_DOWN + '</div>' +
+                '<div class="selector local-lists-btn--edit" style="padding:0.3em; cursor:pointer;" title="Rename">' + ICON_EDIT + '</div>' +
+                '<div class="selector local-lists-btn--delete" style="padding:0.3em; cursor:pointer; color:#ff5252;" title="Delete">&times;</div>' +
+              '</div>' +
+            '</div>'
+          );
 
-      allLists.forEach(function (list, idx) {
-        var $item = $(
-          '<div class="selector local-list-edit-row" style="display: flex; align-items: center; justify-content: space-between; padding: 12px; margin-bottom: 8px; background: rgba(255,255,255,0.05); border-radius: 8px;">' +
-            '<div style="font-size: 1.1em; font-weight: bold; flex-grow: 1; margin-right: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + escapeHtml(list.name) + '</div>' +
-            '<div style="display: flex; gap: 8px;">' +
-              '<div class="btn-toggle-hide" style="cursor: pointer; opacity: ' + (list.hidden ? '0.4' : '1') + ';" title="Приховати/Показати">' + (list.hidden ? ICON_UNCHECKED : ICON_CHECKED) + '</div>' +
-              '<div class="btn-rename" style="cursor: pointer;" title="Перейменувати">' + ICON_EDIT + '</div>' +
-              '<div class="btn-up" style="cursor: pointer; opacity: ' + (idx === 0 ? '0.3' : '1') + ';">' + ICON_UP + '</div>' +
-              '<div class="btn-down" style="cursor: pointer; opacity: ' + (idx === allLists.length - 1 ? '0.3' : '1') + ';">' + ICON_DOWN + '</div>' +
-            '</div>' +
-          '</div>'
-        );
+          $row.find('.local-lists-btn--toggle').on('hover:enter', function () {
+            list.hidden = !list.hidden;
+            Lists.save(lists);
+            refreshModal();
+          });
 
-        $item.find('.btn-toggle-hide').on('click', function (e) {
-          e.stopPropagation();
-          list.hidden = !list.hidden;
-          Lists.save(allLists);
-          renderItems();
-        });
-
-        $item.find('.btn-rename').on('click', function (e) {
-          e.stopPropagation();
-          Lampa.Input.edit({
-            value: list.name,
-            free: true,
-            title: tr('local_lists_new_name')
-          }, function (newVal) {
-            if (newVal && newVal.trim()) {
-              list.name = newVal.trim();
-              Lists.save(allLists);
-              renderItems();
+          $row.find('.local-lists-btn--up').on('hover:enter', function () {
+            if (index > 0) {
+              var tmp = lists[index];
+              lists[index] = lists[index - 1];
+              lists[index - 1] = tmp;
+              Lists.save(lists);
+              refreshModal();
             }
           });
+
+          $row.find('.local-lists-btn--down').on('hover:enter', function () {
+            if (index < lists.length - 1) {
+              var tmp = lists[index];
+              lists[index] = lists[index + 1];
+              lists[index + 1] = tmp;
+              Lists.save(lists);
+              refreshModal();
+            }
+          });
+
+          $row.find('.local-lists-btn--edit').on('hover:enter', function () {
+            Lampa.Input.edit({
+              title: tr('local_lists_new_name'),
+              value: list.name,
+              free: true
+            }, function (newName) {
+              if (newName && newName.trim()) {
+                list.name = newName.trim();
+                Lists.save(lists);
+                refreshModal();
+              }
+            });
+          });
+
+          $row.find('.local-lists-btn--delete').on('hover:enter', function () {
+            Lists.remove(list.id);
+            refreshModal();
+          });
+
+          $wrap.append($row);
         });
+      }
 
-        $item.find('.btn-up').on('click', function (e) {
-          e.stopPropagation();
-          if (idx > 0) {
-            var temp = allLists[idx - 1];
-            allLists[idx - 1] = allLists[idx];
-            allLists[idx] = temp;
-            Lists.save(allLists);
-            renderItems();
-          }
-        });
-
-        $item.find('.btn-down').on('click', function (e) {
-          e.stopPropagation();
-          if (idx < allLists.length - 1) {
-            var temp = allLists[idx + 1];
-            allLists[idx + 1] = allLists[idx];
-            allLists[idx] = temp;
-            Lists.save(allLists);
-            renderItems();
-          }
-        });
-
-        $html.append($item);
-      });
-
-      Lampa.Controller.enable('modal');
+      return $wrap;
     }
 
-    renderItems();
+    function refreshModal() {
+      var $newContent = render();
+      $('.local-lists-manage').replaceWith($newContent);
+      Lampa.Controller.toggle('modal');
+    }
 
     Lampa.Modal.open({
       title: tr('local_lists_edit_title'),
-      html: $html,
+      html: render(),
       size: 'medium',
       onBack: function () {
         Lampa.Modal.close();
-        if (onCloseCallback) onCloseCallback();
+        Lampa.Controller.toggle('content');
       }
     });
   }
 
-  // ── Компонент перегляду списків ─────────────────────────────────────
-  function LocalListsView(object) {
-    var comp = this;
-    var scroll, items, activeListId = null;
+  // ── Імпорт з Trakt.tv ────────────────────────────────────────────────
+  function loadJSZip(callback) {
+    if (window.JSZip) {
+      callback();
+      return;
+    }
+    Lampa.Loading.start();
+    $.getScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js')
+      .done(function () {
+        Lampa.Loading.stop();
+        callback();
+      })
+      .fail(function () {
+        Lampa.Loading.stop();
+        Lampa.Noty.show(tr('local_lists_import_error'));
+      });
+  }
 
-    this.create = function () {
-      return this.render();
-    };
+  function startTraktImport() {
+    loadJSZip(function () {
+      var $input = $('<input type="file" accept=".zip" style="display:none;">');
+      $('body').append($input);
 
-    this.render = function () {
-      var $view = $('<div class="local-lists-view main-lists"></div>');
-      scroll = new Lampa.Scroll();
-      items = new Lampa.Items();
+      $input.on('change', function (e) {
+        var file = e.target.files[0];
+        $input.remove();
+        if (!file) return;
 
-      var $body = $('<div class="local-lists-body" style="padding: 1.5em;"></div>');
-      
-      // Кнопки управління
-      var $toolbar = $('<div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;"></div>');
-      
-      var $btnCreate = $('<div class="selector button" style="padding: 10px 16px; background: rgba(255,255,255,0.1); border-radius: 8px; display: flex; align-items: center; gap: 8px;"><span>+ ' + tr('local_lists_create') + '</span></div>');
-      $btnCreate.on('click', function () {
-        Lampa.Input.edit({ free: true, title: tr('local_lists_new_name') }, function (name) {
-          if (name && name.trim()) {
-            Lists.create(name.trim());
-            comp.refresh();
+        Lampa.Loading.start();
+        Lampa.Noty.show(tr('local_lists_import_reading'));
+
+        var jszip = new window.JSZip();
+        jszip.loadAsync(file).then(function (zip) {
+          var listsFile = zip.file('lists-lists.json') || zip.file(/lists-lists\.json$/i)[0];
+          var itemsFile = zip.file('lists-items.json') || zip.file(/lists-items\.json$/i)[0];
+
+          if (!listsFile) {
+            Lampa.Loading.stop();
+            Lampa.Noty.show(tr('local_lists_import_no_lists'));
+            return;
           }
+
+          Promise.all([
+            listsFile.async('text'),
+            itemsFile ? itemsFile.async('text') : Promise.resolve('[]')
+          ]).then(function (results) {
+            try {
+              var rawLists = JSON.parse(results[0]);
+              var rawItems = JSON.parse(results[1]);
+
+              Lampa.Noty.show(tr('local_lists_import_progress'));
+              processTraktData(rawLists, rawItems);
+            } catch (err) {
+              Lampa.Loading.stop();
+              Lampa.Noty.show(tr('local_lists_import_error'));
+            }
+          });
+        }).catch(function () {
+          Lampa.Loading.stop();
+          Lampa.Noty.show(tr('local_lists_import_error'));
         });
       });
 
-      var $btnSync = $('<div class="selector button" style="padding: 10px 16px; background: rgba(255,255,255,0.1); border-radius: 8px; display: flex; align-items: center; gap: 8px;">' + ICON_CLOUD_UP + '<span>' + tr('local_lists_cloud_backup') + '</span></div>');
-      $btnSync.on('click', function () { Cloud.backup(); });
+      $input.trigger('click');
+    });
+  }
 
-      var $btnEdit = $('<div class="selector button" style="padding: 10px 16px; background: rgba(255,255,255,0.1); border-radius: 8px; display: flex; align-items: center; gap: 8px;">' + ICON_EDIT + '<span>' + tr('local_lists_edit_menu') + '</span></div>');
-      $btnEdit.on('click', function () {
-        openEditListsMenu(function () { comp.refresh(); });
-      });
+  function processTraktData(rawLists, rawItems) {
+    var createdMap = {};
 
-      $toolbar.append($btnCreate).append($btnSync).append($btnEdit);
-      $body.append($toolbar);
+    rawLists.forEach(function (l) {
+      var listName = l.name || l.title || 'Trakt List';
+      var newList = Lists.create(listName);
+      createdMap[l.slug || l.id || listName] = newList.id;
+    });
 
-      // Відображення видимих списків
-      var visibleLists = Lists.getVisible();
-      if (!visibleLists.length) {
-        $body.append('<div style="margin-top: 40px; text-align: center; color: #888; font-size: 1.2em;">' + tr('local_lists_empty') + '</div>');
-      } else {
-        visibleLists.forEach(function (list) {
-          var $sec = $('<div style="margin-bottom: 30px;"></div>');
-          var $head = $('<div style="font-size: 1.4em; font-weight: bold; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;"><span>' + escapeHtml(list.name) + ' (' + list.items.length + ')</span></div>');
-          
-          var $delBtn = $('<div class="selector" style="cursor: pointer; opacity: 0.6; padding: 4px;" title="' + tr('local_lists_remove_item') + '">✕</div>');
-          $delBtn.on('click', function () {
-            Lists.remove(list.id);
-            comp.refresh();
+    var tasks = [];
+
+    rawItems.forEach(function (item) {
+      var listSlug = item.list_slug || (item.list ? item.list.slug : null);
+      var listId = createdMap[listSlug] || (Object.keys(createdMap).length ? createdMap[Object.keys(createdMap)[0]] : null);
+      if (!listId) return;
+
+      var type = item.type || (item.movie ? 'movie' : (item.show ? 'tv' : 'movie'));
+      var media = item[type] || item.movie || item.show;
+      if (!media) return;
+
+      var tmdbId = media.ids ? media.ids.tmdb : null;
+      if (tmdbId) {
+        tasks.push({ listId: listId, tmdbId: tmdbId, type: type, title: media.title, year: media.year });
+      }
+    });
+
+    var current = 0;
+    function fetchNext() {
+      if (current >= tasks.length) {
+        Lampa.Loading.stop();
+        Lampa.Noty.show(tr('local_lists_import_done'));
+        return;
+      }
+
+      var task = tasks[current];
+      current++;
+
+      var tmdbUrl = 'https://api.themoviedb.org/3/' + task.type + '/' + task.tmdbId + '?api_key=' + Lampa.TMDB.key() + '&language=' + Lampa.Storage.get('language', 'uk');
+
+      $.ajax({
+        url: tmdbUrl,
+        method: 'GET',
+        success: function (res) {
+          res.method = task.type;
+          Lists.addItem(task.listId, res);
+          setTimeout(fetchNext, 150);
+        },
+        error: function () {
+          Lists.addItem(task.listId, {
+            id: task.tmdbId,
+            method: task.type,
+            title: task.title || 'Movie ' + task.tmdbId,
+            release_date: task.year ? String(task.year) : ''
           });
-          $head.append($delBtn);
-          $sec.append($head);
+          setTimeout(fetchNext, 100);
+        }
+      });
+    }
 
-          if (list.items.length) {
-            var $line = $('<div class="items-line"></div>');
-            list.items.forEach(function (item) {
-              var cardData = normalizeCard(item);
-              var card = Lampa.Template.get('card', cardData);
-              
-              card.on('click', function () {
-                Lampa.Activity.push({
-                  url: '',
-                  component: 'full',
-                  id: cardData.id,
-                  method: cardData.method,
-                  card: cardData
-                });
-              });
+    fetchNext();
+  }
 
-              card.on('hover:focus', function () {
-                activeListId = list.id;
-              });
+  // ── Випливаюче меню додання у список ───────────
+  function showAddToListMenu(card) {
+    var lists = Lists.getAll();
+    var items = [];
 
-              $line.append(card);
-            });
-            $sec.append($line);
+    items.push({
+      title: tr('local_lists_create'),
+      icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>',
+      action: 'create'
+    });
+
+    lists.forEach(function (list) {
+      var inThis = list.items && list.items.some(function (i) { return String(i.id) === String(card.id); });
+      items.push({
+        title: (inThis ? '✓ ' : '') + list.name,
+        listId: list.id,
+        inThis: inThis,
+        action: 'toggle'
+      });
+    });
+
+    Lampa.Select.show({
+      title: tr('local_lists_button'),
+      items: items,
+      onSelect: function (a) {
+        if (a.action === 'create') {
+          Lampa.Input.edit({
+            title: tr('local_lists_new_name'),
+            value: '',
+            free: true
+          }, function (name) {
+            if (name && name.trim()) {
+              var newList = Lists.create(name.trim());
+              Lists.addItem(newList.id, card);
+              Lampa.Noty.show(tr('local_lists_added'));
+              refreshBookmarkIcon();
+            }
+          });
+        } else if (a.action === 'toggle') {
+          if (a.inThis) {
+            Lists.removeItem(a.listId, card.id);
+            Lampa.Noty.show(tr('local_lists_removed'));
           } else {
-            $sec.append('<div style="color: #666; font-style: italic;">Порожньо</div>');
+            Lists.addItem(a.listId, card);
+            Lampa.Noty.show(tr('local_lists_added'));
           }
+          refreshBookmarkIcon();
+        }
+      },
+      onBack: function () {
+        Lampa.Controller.toggle('content');
+      }
+    });
+  }
 
-          $body.append($sec);
+  // ── Інтеграція кнопки в картку фільму ──────────────────────────────────
+  function injectCardButton() {
+    Lampa.Listener.follow('full', function (e) {
+      if (e.type === 'complite') {
+        var render = e.object.activity.render();
+        var card = e.data.movie || e.object.card;
+        if (!card || isPerson(card)) return;
+
+        var $buttons = render.find('.full-start-new__buttons, .full-start__buttons');
+        if ($buttons.length && !$buttons.find('.button--local-lists').length) {
+          var $btn = $(
+            '<div class="full-start__button selector button--local-lists">' +
+              '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>' +
+              '<span>' + tr('local_lists_button') + '</span>' +
+            '</div>'
+          );
+
+          $btn.on('hover:enter', function () {
+            showAddToListMenu(card);
+          });
+
+          $buttons.append($btn);
+        }
+        refreshBookmarkIcon();
+      }
+    });
+  }
+
+  // ── Шаблон для зірочки у списку каток ─────────────────────────────────
+  function registerTemplate() {
+    Lampa.Template.add('local-lists-star-icon', '<div class="card__icon icon--star" style="color:#ffd700;">' + ICON_STAR_SVG + '</div>');
+  }
+
+  function injectCardIcons() {
+    Lampa.Listener.follow('card', function (e) {
+      if (e.type === 'build') {
+        refreshCardIcon(e.object);
+      }
+    });
+  }
+
+  // ── Власний компонент відображення списків у Lampa ────────────────────
+  function Component(object) {
+    var comp = this;
+    var scroll = new Lampa.Scroll({ mask: true, over: true });
+    var files = new Lampa.Files();
+    var last;
+
+    this.create = function () {
+      this.activity.loader = false;
+
+      var lists = Lists.getVisible();
+      if (!lists.length) {
+        var empty = new Lampa.Empty({ title: tr('local_lists_empty') });
+        scroll.append(empty.render());
+      } else {
+        lists.forEach(function (list) {
+          if (!list.items || !list.items.length) return;
+
+          var line = new Lampa.Line({
+            title: list.name,
+            type: 'cards',
+            noswap: true
+          });
+
+          line.onItem = function (item) {
+            Lampa.Activity.push({
+              url: item.data.method + '/' + item.data.id,
+              component: 'full',
+              id: item.data.id,
+              method: item.data.method,
+              card: item.data
+            });
+          };
+
+          var lineRender = line.render();
+          scroll.append(lineRender);
+
+          list.items.forEach(function (item) {
+            var card = new Lampa.Card(item, { card_small: true });
+            card.build();
+            line.append(card.render());
+          });
         });
       }
 
-      scroll.append($body);
-      $view.append(scroll.render());
-      return $view;
-    };
-
-    this.refresh = function () {
-      Lampa.Activity.replace({ component: 'local_lists_view', title: tr('local_lists_title') });
+      return scroll.render();
     };
 
     this.start = function () {
       Lampa.Controller.add('content', {
         toggle: function () {
           Lampa.Controller.collectionSet(scroll.render());
-          Lampa.Controller.collectionFocus(false, scroll.render());
+          Lampa.Controller.collectionFocus(last || false, scroll.render());
         },
-        left: function () { Lampa.Controller.move('left'); },
-        right: function () { Lampa.Controller.move('right'); },
-        up: function () { Lampa.Controller.move('up'); },
-        down: function () { Lampa.Controller.move('down'); },
+        left: function () { Lampa.Controller.toggle('menu'); },
+        up: function () { Lampa.Navigator.move('up'); },
+        down: function () { Lampa.Navigator.move('down'); },
         back: function () { Lampa.Activity.backward(); }
       });
+
       Lampa.Controller.toggle('content');
     };
 
     this.pause = function () {};
     this.stop = function () {};
     this.destroy = function () {
-      if (scroll) scroll.destroy();
+      scroll.destroy();
     };
   }
 
-  // ── Налаштування плагіна ─────────────────────────────────────────────
-  function addSettings() {
-    Lampa.SettingsComponent.add({
-      component: 'local_lists_settings',
-      icon: ICON_SETTINGS,
-      name: tr('local_lists_settings')
-    });
-
-    Lampa.Settings.listener.follow('open', function (e) {
-      if (e.name === 'local_lists_settings') {
-        var body = e.body;
-        body.empty();
-
-        // Поле GitHub Token
-        var fieldToken = Lampa.Template.get('settings_input', {
-          title: tr('local_lists_github_auth'),
-          value: Lampa.Storage.get(GIST_TOKEN_KEY, '')
-        });
-        fieldToken.on('click', function () {
-          Lampa.Input.edit({
-            value: Lampa.Storage.get(GIST_TOKEN_KEY, ''),
-            free: true,
-            title: tr('local_lists_github_auth')
-          }, function (val) {
-            Lampa.Storage.set(GIST_TOKEN_KEY, (val || '').trim());
-            fieldToken.find('.settings-param-at__value').text(val);
-          });
-        });
-        body.append(fieldToken);
-
-        // Синхронізація
-        var btnSync = Lampa.Template.get('settings_param', {
-          title: tr('local_lists_cloud_backup'),
-          value: ''
-        });
-        btnSync.prepend(ICON_CLOUD_UP + ' ');
-        btnSync.on('click', function () { Cloud.backup(); });
-        body.append(btnSync);
-
-        // Перезапис у хмарі
-        var btnOverwrite = Lampa.Template.get('settings_param', {
-          title: tr('local_lists_cloud_overwrite'),
-          value: ''
-        });
-        btnOverwrite.prepend(ICON_CLOUD_OVERWRITE + ' ');
-        btnOverwrite.on('click', function () { Cloud.overwrite(); });
-        body.append(btnOverwrite);
-
-        // Відновлення з хмари
-        var btnRestore = Lampa.Template.get('settings_param', {
-          title: tr('local_lists_cloud_restore'),
-          value: ''
-        });
-        btnRestore.prepend(ICON_CLOUD_DOWN + ' ');
-        btnRestore.on('click', function () { Cloud.restore(); });
-        body.append(btnRestore);
-      }
-    });
-  }
-
-  // ── Додавання кнопки до меню картки (Full view) ────────────────────
-  function addCardButton() {
-    Lampa.Listener.follow('full', function (e) {
-      if (e.type === 'complite') {
-        var $render = e.object.activity.render();
-        var $buttons = $render.find('.full-start__buttons, .full-start-new__buttons').first();
-
-        if ($buttons.length && !$buttons.find('.btn--local-lists').length) {
-          var $btn = $(
-            '<div class="full-start__button selector button--book btn--local-lists">' +
-              ICON_STAR_SVG +
-              '<span>' + tr('local_lists_button') + '</span>' +
-            '</div>'
-          );
-
-          $btn.on('click', function () {
-            var card = e.object.method ? e.object : (e.object.data || e.data);
-            var cardData = normalizeCard(card);
-            var allLists = Lists.getAll();
-
-            if (!allLists.length) {
-              Lampa.Input.edit({ free: true, title: tr('local_lists_new_name') }, function (name) {
-                if (name && name.trim()) {
-                  var newList = Lists.create(name.trim());
-                  Lists.addItem(newList.id, cardData);
-                  Lampa.Noty.show(tr('local_lists_added'));
-                  refreshBookmarkIcon();
-                }
-              });
-              return;
-            }
-
-            var items = allLists.map(function (list) {
-              var inThis = list.items.some(function (i) { return String(i.id) === String(cardData.id); });
-              return {
-                title: (inThis ? '✓ ' : '') + list.name,
-                listId: list.id,
-                inThis: inThis
-              };
-            });
-
-            items.unshift({
-              title: '+ ' + tr('local_lists_create'),
-              isCreate: true
-            });
-
-            Lampa.Select.show({
-              title: tr('local_lists_title'),
-              items: items,
-              onSelect: function (item) {
-                if (item.isCreate) {
-                  Lampa.Input.edit({ free: true, title: tr('local_lists_new_name') }, function (name) {
-                    if (name && name.trim()) {
-                      var newList = Lists.create(name.trim());
-                      Lists.addItem(newList.id, cardData);
-                      Lampa.Noty.show(tr('local_lists_added'));
-                      refreshBookmarkIcon();
-                    }
-                  });
-                } else {
-                  if (item.inThis) {
-                    Lists.removeItem(item.listId, cardData.id);
-                    Lampa.Noty.show(tr('local_lists_removed'));
-                  } else {
-                    Lists.addItem(item.listId, cardData);
-                    Lampa.Noty.show(tr('local_lists_added'));
-                  }
-                  refreshBookmarkIcon();
-                }
-              }
-            });
-          });
-
-          $buttons.append($btn);
-        }
-      }
-    });
-  }
-
-  // ── Додавання шаблону зірочки для карток ──────────────────────────────
-  function initTemplates() {
-    Lampa.Template.add('local-lists-star-icon', '<div class="card__icon icon--star" style="color: #ffc107; margin-right: 4px;">' + ICON_STAR_SVG + '</div>');
-  }
-
-  // ── Ініціалізація плагіна ────────────────────────────────────────────
-  function init() {
-    addLang();
-    initTemplates();
-
-    // Реєстрація компонента
-    Lampa.Component.add('local_lists_view', LocalListsView);
-
-    // Додавання пункту в головне меню
+  // ── Головне меню та Налаштування ──────────────────────────────────────
+  function injectMenu() {
     Lampa.Listener.follow('app', function (e) {
       if (e.type === 'ready') {
         var menu = Lampa.Menu.get();
         if (menu) {
-          var menuItem = {
+          menu.push({
             title: tr('local_lists_title'),
-            icon: ICON_STAR_SVG,
-            component: 'local_lists_view'
-          };
-          menu.push(menuItem);
+            icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>',
+            component: 'local_lists',
+            page: 'local_lists'
+          });
         }
       }
     });
 
-    // Слухач для рендеру карток (додавання зірочки)
-    Lampa.Listener.follow('card', function (e) {
-      if (e.type === 'build') {
-        refreshCardIcon(e.object);
-      }
-    });
-
-    addSettings();
-    addCardButton();
+    Lampa.Component.add('local_lists', Component);
   }
 
-  if (window.Lampa) {
+  function injectSettings() {
+    Lampa.SettingsMain.add();
+
+    Lampa.Listener.follow('settings', function (e) {
+      if (e.type === 'open' && e.name === 'main') {
+        var $body = e.body;
+        var $btn = $(
+          '<div class="settings-folder selector" data-component="local_lists_settings">' +
+            '<div class="settings-folder__icon">' + ICON_SETTINGS + '</div>' +
+            '<div class="settings-folder__name">' + tr('local_lists_settings') + '</div>' +
+          '</div>'
+        );
+
+        $btn.on('hover:enter', function () {
+          openSettingsPage();
+        });
+
+        $body.find('.settings-folders').append($btn);
+      }
+    });
+  }
+
+  function openSettingsPage() {
+    var html = $('<div class="settings-list"></div>');
+
+    // GitHub Token
+    var $token = $(
+      '<div class="settings-param selector" data-type="input">' +
+        '<div class="settings-param__name">' + tr('local_lists_github_auth') + '</div>' +
+        '<div class="settings-param__value">' + (Lampa.Storage.get(GIST_TOKEN_KEY, '') ? '••••••••' : 'Не вказано') + '</div>' +
+      '</div>'
+    );
+    $token.on('hover:enter', function () {
+      Lampa.Input.edit({
+        title: tr('local_lists_github_auth'),
+        value: Lampa.Storage.get(GIST_TOKEN_KEY, ''),
+        free: true
+      }, function (val) {
+        Lampa.Storage.set(GIST_TOKEN_KEY, (val || '').trim());
+        $token.find('.settings-param__value').text(val ? '••••••••' : 'Не вказано');
+      });
+    });
+    html.append($token);
+
+    // Sync
+    var $sync = $(
+      '<div class="settings-param selector">' +
+        '<div class="settings-param__name">' + tr('local_lists_cloud_backup') + '</div>' +
+      '</div>'
+    );
+    $sync.on('hover:enter', function () { Cloud.backup(); });
+    html.append($sync);
+
+    // Overwrite
+    var $overwrite = $(
+      '<div class="settings-param selector">' +
+        '<div class="settings-param__name">' + tr('local_lists_cloud_overwrite') + '</div>' +
+      '</div>'
+    );
+    $overwrite.on('hover:enter', function () { Cloud.overwrite(); });
+    html.append($overwrite);
+
+    // Restore
+    var $restore = $(
+      '<div class="settings-param selector">' +
+        '<div class="settings-param__name">' + tr('local_lists_cloud_restore') + '</div>' +
+      '</div>'
+    );
+    $restore.on('hover:enter', function () { Cloud.restore(); });
+    html.append($restore);
+
+    // Manage Lists
+    var $manage = $(
+      '<div class="settings-param selector">' +
+        '<div class="settings-param__name">' + tr('local_lists_edit_menu') + '</div>' +
+      '</div>'
+    );
+    $manage.on('hover:enter', function () { openManageListsModal(); });
+    html.append($manage);
+
+    // Trakt Import
+    var $import = $(
+      '<div class="settings-param selector">' +
+        '<div class="settings-param__name">' + tr('local_lists_import_trakt') + '</div>' +
+      '</div>'
+    );
+    $import.on('hover:enter', function () { startTraktImport(); });
+    html.append($import);
+
+    Lampa.Modal.open({
+      title: tr('local_lists_settings'),
+      html: html,
+      size: 'medium',
+      onBack: function () {
+        Lampa.Modal.close();
+        Lampa.Controller.toggle('settings');
+      }
+    });
+  }
+
+  // ── Ініціалізація плагіна ──────────────────────────────────────────────
+  function init() {
+    addLang();
+    registerTemplate();
+    injectCardButton();
+    injectCardIcons();
+    injectMenu();
+    injectSettings();
+  }
+
+  if (window.appready) {
     init();
+  } else {
+    Lampa.Listener.follow('app', function (e) {
+      if (e.type === 'ready') init();
+    });
   }
 })();
