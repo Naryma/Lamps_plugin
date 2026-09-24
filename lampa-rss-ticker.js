@@ -4,7 +4,7 @@
     if (typeof Lampa === 'undefined' || window.lampa_rss_ticker_inited) return;
     window.lampa_rss_ticker_inited = true;
 
-    // ---------- РљРѕРЅСЃС‚Р°РЅС‚Рё ----------
+    // ---------- Константи ----------
     var DEFAULT_URL   = 'https://news.google.com/rss?hl=uk&gl=UA&ceid=UA:uk';
     var DEFAULT_PROXY = 'https://api.allorigins.win/raw?url=';
     var MAX_ITEMS     = 20;
@@ -18,7 +18,7 @@
                '<path d="M4 11a9 9 0 0 1 9 9"></path><path d="M4 4a16 16 0 0 1 16 16"></path>' +
                '<circle cx="5" cy="19" r="1"></circle></svg>';
 
-    // ---------- РЎС‚Р°РЅ ----------
+    // ---------- Стан ----------
     var started    = false;
     var timer      = null;
     var xhr        = null;
@@ -28,11 +28,11 @@
     var $wrap      = null;
     var $content   = null;
 
-    // ---------- РҐРµР»РїРµСЂРё ----------
+    // ---------- Хелпери ----------
     function opt(name, def) { return Lampa.Storage.get(name, def); }
     function toBool(v) { return v === true || v === 'true'; }
     function isEnabled() { return toBool(opt('rss_ticker_enabled', 'true')); }
-    // Lampa Р·Р±РµСЂС–РіР°С” Р·РЅР°С‡РµРЅРЅСЏ РїС–СЃР»СЏ onChange, С‚РѕРјСѓ С‡РёС‚Р°С”РјРѕ Р№РѕРіРѕ Р· РЅРµРІРµР»РёРєРѕСЋ Р·Р°С‚СЂРёРјРєРѕСЋ
+    // Lampa зберігає значення після onChange, тому читаємо його з невеликою затримкою
     function later(fn) { setTimeout(fn, 0); }
 
     function getFeedUrl() {
@@ -51,20 +51,20 @@
         try { localStorage.setItem(CACHE_KEY, JSON.stringify({ url: url, text: text })); } catch (e) {}
     }
 
-    // ---------- 1. РќР°Р»Р°С€С‚СѓРІР°РЅРЅСЏ ----------
+    // ---------- 1. Налаштування ----------
     function initSettings() {
         if (!Lampa.SettingsApi) return;
 
         Lampa.SettingsApi.addComponent({
             component: 'rss_ticker',
-            name: 'RSS РЎС‚СЂС–С‡РєР°',
+            name: 'RSS Стрічка',
             icon: ICON
         });
 
         Lampa.SettingsApi.addParam({
             component: 'rss_ticker',
             param: { name: 'rss_ticker_enabled', type: 'trigger', default: true },
-            field: { name: 'РЎС‚Р°С‚СѓСЃ СЃС‚СЂС–С‡РєРё', description: 'РџРѕРєР°Р·СѓРІР°С‚Рё СЂСѓС…РѕРјРёР№ СЂСЏРґРѕРє РЅРѕРІРёРЅ' },
+            field: { name: 'Статус стрічки', description: 'Показувати рухомий рядок новин' },
             onChange: function () {
                 later(function () {
                     updateVisibility();
@@ -76,7 +76,7 @@
         Lampa.SettingsApi.addParam({
             component: 'rss_ticker',
             param: { name: 'rss_ticker_url', type: 'input', default: DEFAULT_URL },
-            field: { name: 'URL RSS-СЃС‚СЂС–С‡РєРё', description: 'РџРѕСЃРёР»Р°РЅРЅСЏ РЅР° XML/RSS/Atom РїРѕС‚С–Рє РЅРѕРІРёРЅ' },
+            field: { name: 'URL RSS-стрічки', description: 'Посилання на XML/RSS/Atom потік новин' },
             onChange: function () { later(reloadFeed); }
         });
 
@@ -85,10 +85,10 @@
             param: {
                 name: 'rss_ticker_pxs',
                 type: 'select',
-                values: { '50': 'РџРѕРІС–Р»СЊРЅРѕ', '80': 'Р—РІРёС‡Р°Р№РЅРѕ', '120': 'РЁРІРёРґРєРѕ' },
+                values: { '50': 'Повільно', '80': 'Звичайно', '120': 'Швидко' },
                 default: '80'
             },
-            field: { name: 'РЁРІРёРґРєС–СЃС‚СЊ СЂСѓС…Сѓ', description: 'РЁРІРёРґРєС–СЃС‚СЊ РЅРµ Р·Р°Р»РµР¶РёС‚СЊ РІС–Рґ РґРѕРІР¶РёРЅРё С‚РµРєСЃС‚Сѓ' },
+            field: { name: 'Швидкість руху', description: 'Швидкість не залежить від довжини тексту' },
             onChange: function () { later(restartAnimation); }
         });
 
@@ -97,10 +97,10 @@
             param: {
                 name: 'rss_ticker_bottom',
                 type: 'select',
-                values: { '0': 'РќРµРјР°С”', '30': '30 px', '60': '60 px', '90': '90 px' },
+                values: { '0': 'Немає', '30': '30 px', '60': '60 px', '90': '90 px' },
                 default: '0'
             },
-            field: { name: 'Р’С–РґСЃС‚СѓРї Р·РЅРёР·Сѓ', description: 'РЇРєС‰Рѕ СЃС‚СЂС–С‡РєР° РїРµСЂРµРєСЂРёРІР°С” РЅРёР¶РЅС” РјРµРЅСЋ Р°Р±Рѕ РЅР° РўР’ РѕР±СЂС–Р·Р°С”С‚СЊСЃСЏ РєСЂР°С”Рј РµРєСЂР°РЅР°' },
+            field: { name: 'Відступ знизу', description: 'Якщо стрічка перекриває нижнє меню або на ТВ обрізається краєм екрана' },
             onChange: function () { later(applyPosition); }
         });
 
@@ -108,8 +108,8 @@
             component: 'rss_ticker',
             param: { name: 'rss_ticker_proxy', type: 'input', default: '' },
             field: {
-                name: 'РЎРІС–Р№ CORS-РїСЂРѕРєСЃС–',
-                description: 'РќРµРѕР±РѕРІКјСЏР·РєРѕРІРѕ. РџСЂРµС„С–РєСЃ, РґРѕ СЏРєРѕРіРѕ РґРѕРґР°С”С‚СЊСЃСЏ Р·Р°РєРѕРґРѕРІР°РЅРёР№ URL СЃС‚СЂС–С‡РєРё. РЇРєС‰Рѕ РїРѕСЂРѕР¶РЅСЊРѕ: СЃРїРѕС‡Р°С‚РєСѓ РЅР°РїСЂСЏРјСѓ, РїРѕС‚С–Рј С‡РµСЂРµР· allorigins.win'
+                name: 'Свій CORS-проксі',
+                description: 'Необовʼязково. Префікс, до якого додається закодований URL стрічки. Якщо порожньо: спочатку напряму, потім через allorigins.win'
             },
             onChange: function () { later(reloadFeed); }
         });
@@ -155,7 +155,7 @@
         $wrap.css('bottom', (parseInt(opt('rss_ticker_bottom', '0'), 10) || 0) + 'px');
     }
 
-    // РЁРІРёРґРєС–СЃС‚СЊ Сѓ px/СЃ: С‚СЂРёРІР°Р»С–СЃС‚СЊ СЂР°С…СѓС”С‚СЊСЃСЏ РІС–Рґ СЂРµР°Р»СЊРЅРѕС— С€РёСЂРёРЅРё С‚РµРєСЃС‚Сѓ
+    // Швидкість у px/с: тривалість рахується від реальної ширини тексту
     function restartAnimation() {
         if (!$content || $wrap.hasClass('hide-ticker')) return;
 
@@ -163,7 +163,7 @@
         el.style.webkitAnimationName = 'none';
         el.style.animationName = 'none';
 
-        var width = el.offsetWidth; // РїСЂРёРјСѓСЃРѕРІРёР№ reflow + РІРёРјС–СЂ
+        var width = el.offsetWidth; // примусовий reflow + вимір
         if (!width) return;
 
         var pxs = parseInt(opt('rss_ticker_pxs', '80'), 10) || 80;
@@ -198,21 +198,21 @@
     function showCachedOrLoading() {
         var cached = readCache(getFeedUrl());
         hasNews = !!cached;
-        setText(cached || 'Р—Р°РІР°РЅС‚Р°Р¶РµРЅРЅСЏ РЅРѕРІРёРЅ RSS...');
+        setText(cached || 'Завантаження новин RSS...');
     }
 
-    // ---------- 3. Р—Р°РІР°РЅС‚Р°Р¶РµРЅРЅСЏ С‚Р° РїР°СЂСЃРёРЅРі ----------
+    // ---------- 3. Завантаження та парсинг ----------
     function parseRSS(xmlText) {
         try {
             var doc = new DOMParser().parseFromString(xmlText, 'text/xml');
-            if (!doc || doc.getElementsByTagName('parsererror').length) return null; // РЅРµ XML
+            if (!doc || doc.getElementsByTagName('parsererror').length) return null; // не XML
 
             var nodes = doc.getElementsByTagName('item');
             if (!nodes.length) nodes = doc.getElementsByTagName('entry');
 
             var titles = [];
             for (var i = 0; i < nodes.length && titles.length < MAX_ITEMS; i++) {
-                // getElementsByTagName('title') РЅРµ С‡С–РїР°С” <media:title> С‚Р° РїРѕРґС–Р±РЅС–
+                // getElementsByTagName('title') не чіпає <media:title> та подібні
                 var t = nodes[i].getElementsByTagName('title')[0];
                 var text = t ? t.textContent.replace(/\s+/g, ' ').trim() : '';
                 if (text) titles.push(text);
@@ -234,7 +234,7 @@
 
         xhr = $.ajax({ url: routes[index], type: 'GET', dataType: 'text', timeout: TIMEOUT_MS })
             .done(function (text) {
-                if (id !== reqId) return; // Р·Р°СЃС‚Р°СЂС–Р»РёР№ Р·Р°РїРёС‚
+                if (id !== reqId) return; // застарілий запит
                 var titles = parseRSS(text);
                 if (titles) onOk(titles);
                 else fetchFeed(routes, index + 1, id, onOk, onFail);
@@ -255,7 +255,7 @@
         fetchFeed(buildRoutes(feedUrl), 0, id, function (titles) {
             if (!titles.length) {
                 hasNews = false;
-                setText('РќРµРјР°С” РґРѕСЃС‚СѓРїРЅРёС… РЅРѕРІРёРЅ Сѓ С†С–Р№ СЃС‚СЂС–С‡С†С–');
+                setText('Немає доступних новин у цій стрічці');
                 return;
             }
             var text = titles.join(SEPARATOR);
@@ -263,8 +263,8 @@
             writeCache(feedUrl, text);
             setText(text);
         }, function () {
-            // РЇРєС‰Рѕ РІР¶Рµ С” СЃС‚Р°СЂС– РЅРѕРІРёРЅРё, РЅРµ РїРµСЂРµС‚РёСЂР°С”РјРѕ С—С… РїРѕРјРёР»РєРѕСЋ
-            if (!hasNews) setText('РџРѕРјРёР»РєР° Р·Р°РІР°РЅС‚Р°Р¶РµРЅРЅСЏ RSS. РџРµСЂРµРІС–СЂС‚Рµ URL Р°Р±Рѕ РїСЂРѕРєСЃС– РІ РЅР°Р»Р°С€С‚СѓРІР°РЅРЅСЏС….');
+            // Якщо вже є старі новини, не перетираємо їх помилкою
+            if (!hasNews) setText('Помилка завантаження RSS. Перевірте URL або проксі в налаштуваннях.');
         });
     }
 
@@ -273,7 +273,7 @@
         loadRSS();
     }
 
-    // ---------- 4. РџРѕРґС–С— Lampa ----------
+    // ---------- 4. Події Lampa ----------
     function listenEvents() {
         try {
             var pl = Lampa.Player && Lampa.Player.listener;
@@ -282,7 +282,7 @@
             pl.follow('start',   function () { playerOpen = true;  updateVisibility(); });
             pl.follow('destroy', function () { playerOpen = false; updateVisibility(); });
 
-            // РЎСѓРјС–СЃРЅС–СЃС‚СЊ Р·С– Р·Р±С–СЂРєР°РјРё, РґРµ РїРѕРґС–С— РїСЂРёС…РѕРґСЏС‚СЊ С‡РµСЂРµР· 'state'
+            // Сумісність зі збірками, де події приходять через 'state'
             pl.follow('state', function (e) {
                 if (!e) return;
                 if (e.type === 'play' || e.type === 'start') { playerOpen = true; updateVisibility(); }
@@ -291,7 +291,7 @@
         } catch (e) {}
     }
 
-    // ---------- 5. РўРѕС‡РєР° РІС…РѕРґСѓ ----------
+    // ---------- 5. Точка входу ----------
     function start() {
         if (started) return;
         started = true;
